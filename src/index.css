@@ -73,3 +73,10 @@ body {
 .btn-snooze { background: transparent; color: var(--ink); border: 1px solid var(--border); font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 6px; cursor: pointer; }
 .btn-archive { background: none; border: none; color: var(--ink); opacity: 0.4; font-size: 12px; cursor: pointer; padding: 7px 6px; }
 .btn-archive:hover { opacity: 0.7; }
+
+.login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.login-card { background: var(--card); border-radius: 8px; padding: 32px; max-width: 380px; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.login-form { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+.login-sent { margin-top: 20px; font-size: 14px; display: flex; flex-direction: column; gap: 12px; }
+.login-sent p { margin: 0; opacity: 0.8; }
+.login-error { color: var(--overdue); font-size: 13px; margin: 0; }
