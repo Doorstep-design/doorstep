@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabaseClient";
+import Login from "./Login";
 
 const CADENCE_DAYS = [1, 3, 7, 14, 30, 90];
 const SOURCES = ["Website", "Zillow", "Referral", "Open House", "Walk-in", "Other"];
-const STORAGE_KEY = "doorstep:leads";
+const FREE_LEAD_LIMIT = 15;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -16,7 +18,25 @@ function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / 86400000);
 }
 
+// Maps between our camelCase app model and Supabase's snake_case columns.
+function fromRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone || "",
+    source: row.source,
+    notes: row.notes || "",
+    addedDate: row.added_date,
+    lastContact: row.last_contact,
+    stage: row.stage,
+    nextDue: row.next_due,
+    history: row.history || [],
+    archived: row.archived,
+  };
+}
+
 export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = not checked yet, null = logged out
   const [leads, setLeads] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -25,69 +45,100 @@ export default function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      setLeads(raw ? JSON.parse(raw) : []);
-    } catch {
-      setLeads([]);
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const fetchLeads = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .order("next_due", { ascending: true });
+    if (error) {
+      setError("Couldn't load your leads: " + error.message);
+    } else {
+      setLeads(data.map(fromRow));
+      setError("");
     }
     setLoaded(true);
   }, []);
 
-  const persist = (next) => {
-    setLeads(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setError("");
-    } catch {
-      setError("Couldn't save — your browser storage may be full or blocked.");
-    }
-  };
+  useEffect(() => {
+    if (session) fetchLeads();
+  }, [session, fetchLeads]);
 
-  const addLead = (e) => {
+  if (session === undefined) {
+    return <div className="app"><p style={{ opacity: 0.6 }}>Loading…</p></div>;
+  }
+  if (!session) {
+    return <Login />;
+  }
+
+  const addLead = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
+    const active = leads.filter((l) => !l.archived);
+    if (active.length >= FREE_LEAD_LIMIT) {
+      setError(`You've hit the free plan limit of ${FREE_LEAD_LIMIT} active leads. Upgrade to add more.`);
+      return;
+    }
     const today = todayISO();
-    const newLead = {
-      id: `${Date.now()}`,
+    const { error } = await supabase.from("leads").insert({
+      user_id: session.user.id,
       name: form.name.trim(),
       phone: form.phone.trim(),
       source: form.source,
       notes: form.notes.trim(),
-      addedDate: today,
-      lastContact: null,
+      added_date: today,
+      last_contact: null,
       stage: 0,
-      nextDue: addDays(today, CADENCE_DAYS[0]),
+      next_due: addDays(today, CADENCE_DAYS[0]),
       history: [],
       archived: false,
-    };
-    persist([newLead, ...leads]);
-    setForm({ name: "", phone: "", source: SOURCES[0], notes: "" });
-    setShowForm(false);
-  };
-
-  const markContacted = (id) => {
-    const today = todayISO();
-    const next = leads.map((l) => {
-      if (l.id !== id) return l;
-      const nextStage = Math.min(l.stage + 1, CADENCE_DAYS.length - 1);
-      return {
-        ...l,
-        lastContact: today,
-        stage: nextStage,
-        nextDue: addDays(today, CADENCE_DAYS[nextStage]),
-        history: [...l.history, { date: today, action: "Contacted" }],
-      };
     });
-    persist(next);
+    if (error) {
+      setError("Couldn't add lead: " + error.message);
+    } else {
+      setForm({ name: "", phone: "", source: SOURCES[0], notes: "" });
+      setShowForm(false);
+      fetchLeads();
+    }
   };
 
-  const snooze = (id, days) => {
-    persist(leads.map((l) => (l.id === id ? { ...l, nextDue: addDays(l.nextDue, days) } : l)));
+  const markContacted = async (l) => {
+    const today = todayISO();
+    const nextStage = Math.min(l.stage + 1, CADENCE_DAYS.length - 1);
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        last_contact: today,
+        stage: nextStage,
+        next_due: addDays(today, CADENCE_DAYS[nextStage]),
+        history: [...l.history, { date: today, action: "Contacted" }],
+      })
+      .eq("id", l.id);
+    if (error) setError("Couldn't update: " + error.message);
+    else fetchLeads();
   };
 
-  const archive = (id) => {
-    persist(leads.map((l) => (l.id === id ? { ...l, archived: true } : l)));
+  const snooze = async (l, days) => {
+    const { error } = await supabase
+      .from("leads")
+      .update({ next_due: addDays(l.nextDue, days) })
+      .eq("id", l.id);
+    if (error) setError("Couldn't update: " + error.message);
+    else fetchLeads();
+  };
+
+  const archive = async (l) => {
+    const { error } = await supabase.from("leads").update({ archived: true }).eq("id", l.id);
+    if (error) setError("Couldn't update: " + error.message);
+    else fetchLeads();
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
   };
 
   if (!loaded) {
@@ -123,9 +174,13 @@ export default function App() {
           <h1 className="title">Doorstep</h1>
           <p className="subtitle">Every lead gets knocked on until they answer, or you decide to stop.</p>
         </div>
-        <button className="add-btn" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? "Cancel" : "+ Add lead"}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 12, opacity: 0.5 }}>{session.user.email}</span>
+          <button className="btn-snooze" onClick={signOut}>Sign out</button>
+          <button className="add-btn" onClick={() => setShowForm((s) => !s)}>
+            {showForm ? "Cancel" : "+ Add lead"}
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -144,8 +199,8 @@ export default function App() {
           <p className="stat-label">Upcoming</p>
         </div>
         <div className="stat-card" style={{ borderTop: "3px solid var(--ink)" }}>
-          <p className="stat-value">{active.length}</p>
-          <p className="stat-label">Total active</p>
+          <p className="stat-value">{active.length} / {FREE_LEAD_LIMIT}</p>
+          <p className="stat-label">Active leads (free plan)</p>
         </div>
       </div>
 
@@ -202,9 +257,9 @@ export default function App() {
                   </p>
                 </div>
                 <div className="lead-actions">
-                  <button className="btn-contact" onClick={() => markContacted(l.id)}>Mark contacted</button>
-                  <button className="btn-snooze" onClick={() => snooze(l.id, 3)}>Snooze 3d</button>
-                  <button className="btn-archive" onClick={() => archive(l.id)}>Archive</button>
+                  <button className="btn-contact" onClick={() => markContacted(l)}>Mark contacted</button>
+                  <button className="btn-snooze" onClick={() => snooze(l, 3)}>Snooze 3d</button>
+                  <button className="btn-archive" onClick={() => archive(l)}>Archive</button>
                 </div>
               </div>
             );
