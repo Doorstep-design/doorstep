@@ -43,12 +43,63 @@ export default function App() {
   const [form, setForm] = useState({ name: "", phone: "", source: SOURCES[0], notes: "" });
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
+  const [subscribed, setSubscribed] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  const fetchProfile = useCallback(async (userId) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("subscribed")
+      .eq("id", userId)
+      .maybeSingle();
+    setSubscribed(Boolean(data?.subscribed));
+  }, []);
+
+  useEffect(() => {
+    if (session) fetchProfile(session.user.id);
+  }, [session, fetchProfile]);
+
+  // After returning from Stripe Checkout, re-check subscription status a
+  // couple of times — the webhook usually lands within a second or two.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") === "true" && session) {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts += 1;
+        fetchProfile(session.user.id);
+        if (attempts >= 5) clearInterval(interval);
+      }, 2000);
+      window.history.replaceState({}, "", window.location.pathname);
+      return () => clearInterval(interval);
+    }
+  }, [session, fetchProfile]);
+
+  const startUpgrade = async () => {
+    setUpgrading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/create-paystack-transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: session.user.id, email: session.user.email }),
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else setError("Couldn't start checkout: " + (data.error || "unknown error"));
+    } catch (err) {
+      setError("Couldn't start checkout: " + err.message);
+    }
+    setUpgrading(false);
+  };
+
+  const leadLimit = subscribed ? Infinity : FREE_LEAD_LIMIT;
 
   const fetchLeads = useCallback(async () => {
     const { data, error } = await supabase
@@ -79,7 +130,7 @@ export default function App() {
     e.preventDefault();
     if (!form.name.trim()) return;
     const active = leads.filter((l) => !l.archived);
-    if (active.length >= FREE_LEAD_LIMIT) {
+    if (active.length >= leadLimit) {
       setError(`You've hit the free plan limit of ${FREE_LEAD_LIMIT} active leads. Upgrade to add more.`);
       return;
     }
@@ -174,8 +225,17 @@ export default function App() {
           <h1 className="title">Doorstep</h1>
           <p className="subtitle">Every lead gets knocked on until they answer, or you decide to stop.</p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, opacity: 0.5 }}>{session.user.email}</span>
+          {subscribed ? (
+            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--forest)", background: "#E4EEED", padding: "4px 10px", borderRadius: 999 }}>
+              Unlimited plan
+            </span>
+          ) : (
+            <button className="submit-btn" onClick={startUpgrade} disabled={upgrading}>
+              {upgrading ? "Loading…" : "Upgrade — ₦18,000/mo"}
+            </button>
+          )}
           <button className="btn-snooze" onClick={signOut}>Sign out</button>
           <button className="add-btn" onClick={() => setShowForm((s) => !s)}>
             {showForm ? "Cancel" : "+ Add lead"}
@@ -199,8 +259,8 @@ export default function App() {
           <p className="stat-label">Upcoming</p>
         </div>
         <div className="stat-card" style={{ borderTop: "3px solid var(--ink)" }}>
-          <p className="stat-value">{active.length} / {FREE_LEAD_LIMIT}</p>
-          <p className="stat-label">Active leads (free plan)</p>
+          <p className="stat-value">{active.length}{subscribed ? "" : ` / ${FREE_LEAD_LIMIT}`}</p>
+          <p className="stat-label">{subscribed ? "Active leads" : "Active leads (free plan)"}</p>
         </div>
       </div>
 
