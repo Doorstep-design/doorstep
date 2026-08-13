@@ -29,7 +29,24 @@ export default function Login() {
           <span className="eyebrow-text">Follow-up autopilot</span>
         </div>
         <h1 className="title">Doorstep</h1>
-        <p className="subtitle">Sign in to see your leads, synced across every device.</p>
+        <p className="subtitle">The dead-simple way to stop losing real estate leads to forgetting.</p>
+
+        <div className="login-features">
+          <div className="login-feature-item">
+            <span className="login-feature-check">✓</span>
+            <span>Add a lead once — Doorstep schedules follow-ups automatically at 1, 3, 7, 14, 30, and 90 days.</span>
+          </div>
+          <div className="login-feature-item">
+            <span className="login-feature-check">✓</span>
+            <span>Your dashboard shows exactly who's overdue today — no spreadsheet, no guessing.</span>
+          </div>
+          <div className="login-feature-item">
+            <span className="login-feature-check">✓</span>
+            <span>Your leads follow you across your phone and laptop, private to your account only.</span>
+          </div>
+        </div>
+
+        <hr className="login-divider" />
 
         {sent ? (
           <div className="login-sent">
@@ -52,6 +69,8 @@ export default function Login() {
             {error && <p className="login-error">{error}</p>}
           </form>
         )}
+
+        <p className="login-price-note">Free for your first 15 active leads · ₦18,000/mo for unlimited</p>
       </div>
     </div>
   );
