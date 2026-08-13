@@ -70,7 +70,7 @@ export default function Login() {
           </form>
         )}
 
-        <p className="login-price-note">Free for your first 15 active leads · ₦18,000/mo for unlimited</p>
+        <p className="login-price-note">Free for your first 15 active leads · ₦20,000/mo for unlimited</p>
       </div>
     </div>
   );
