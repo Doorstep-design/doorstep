@@ -233,7 +233,7 @@ export default function App() {
             </span>
           ) : (
             <button className="submit-btn" onClick={startUpgrade} disabled={upgrading}>
-              {upgrading ? "Loading…" : "Upgrade — ₦18,000/mo"}
+              {upgrading ? "Loading…" : "Upgrade — ₦20,000/mo"}
             </button>
           )}
           <button className="btn-snooze" onClick={signOut}>Sign out</button>
